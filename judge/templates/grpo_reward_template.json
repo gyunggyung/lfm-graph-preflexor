@@ -1,0 +1,13 @@
+{
+  "_comment": "Template for grpo_reward judgments. Copy and fill per entry.",
+  "results": [
+    {
+      "id": "<batch_id>|0",
+      "scores": {
+        "correctness": 0.0,
+        "graph_utility": 0.0
+      },
+      "justification": "correctness: ...; graph_utility: ..."
+    }
+  ]
+}

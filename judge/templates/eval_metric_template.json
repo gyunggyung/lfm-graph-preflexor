@@ -1,0 +1,14 @@
+{
+  "_comment": "Template for eval_metric judgments (100-q benchmark). Copy and fill per entry.",
+  "results": [
+    {
+      "id": "<batch_id>|0",
+      "scores": {
+        "reasoning_quality": 0.0,
+        "intellectual_depth": 0.0,
+        "reasoning_traceability": 0.0
+      },
+      "justification": "quality: ...; depth: ...; traceability: ..."
+    }
+  ]
+}

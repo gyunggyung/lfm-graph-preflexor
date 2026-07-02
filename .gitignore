@@ -1,0 +1,54 @@
+# Data (large, regenerable via scripts/01_*.py and 02_*.py)
+data/raw/
+data/processed/
+
+# Training artifacts
+checkpoints/
+logs/
+
+# Judge queue runtime state (entries are transient — keep rubric and templates only)
+judge/pending/
+judge/done/
+judge/archive/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.local
+*.token
+*.key
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# wandb
+wandb/
+
+# model binaries (we upload via HF, not git)
+*.safetensors
+*.bin
+*.pt
+*.ckpt
