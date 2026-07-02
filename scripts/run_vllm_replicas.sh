@@ -1,56 +1,97 @@
 #!/usr/bin/env bash
-# Launch vLLM rollout servers serving the merged ORPO model on the GPU list
-# specified by VLLM_GPUS, one process per GPU. Use this BEFORE 04_run_grpo.sh.
+# Launch one vLLM api_server per GPU in VLLM_GPUS.
 #
-# Usage: ./run_vllm_replicas.sh configs/grpo_lfm25_8b.env
+# Uses configs/env_common.sh for VLLM_ENV, LD_LIBRARY_PATH, ports.
+# Adapted from Liquid-CLI/scripts/run_lfm25_vllm_replicas_clean.sh.
+#
+# Usage:
+#   ./run_vllm_replicas.sh configs/grpo_qwen3_8b.env [model_path]
+#
+# If model_path is not given, defaults to BASE_MODEL_DIR/merged from config,
+# falling back to TOKENIZER_MODEL (base HF model).
 set -euo pipefail
 
-CONFIG="${1:-configs/grpo_lfm25_8b.env}"
+CONFIG="${1:-configs/grpo_qwen3_8b.env}"
+if [[ ! -f "$CONFIG" ]]; then
+  echo "config not found: $CONFIG" >&2
+  exit 1
+fi
 # shellcheck disable=SC1090
 source "$CONFIG"
 
-if [[ -z "${HF_TOKEN:-}" ]]; then
-  ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.env"
-  if [[ -f "$ENV_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
+MODEL_PATH="${2:-${BASE_MODEL_DIR}/merged}"
+if [[ ! -d "$MODEL_PATH" ]]; then
+  echo "[vllm] $MODEL_PATH not found, falling back to ${TOKENIZER_MODEL}"
+  MODEL_PATH="${TOKENIZER_MODEL}"
+fi
+
+mkdir -p "$VLLM_LOG_DIR"
+rm -f "$VLLM_LOG_DIR/pids.txt" "$VLLM_LOG_DIR/urls.txt" "$VLLM_LOG_DIR/vllm_base_urls.txt"
+
+IFS=',' read -r -a GPUS <<< "$VLLM_GPUS"
+PIDS=()
+URLS=()
+
+cleanup() {
+  echo "[vllm] cleaning up replicas..."
+  for pid in "${PIDS[@]:-}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+}
+trap cleanup INT TERM
+READY_TIMEOUT_SEC="${VLLM_READY_TIMEOUT:-300}"
+
+for i in "${!GPUS[@]}"; do
+  gpu="${GPUS[$i]}"
+  port="$((VLLM_BASE_PORT + i))"
+  url="http://${VLLM_HOST}:${port}/v1"
+  URLS+=("$url")
+
+  echo "[vllm] starting gpu=${gpu} port=${port} model=${MODEL_PATH}"
+  env -u PYTHONPATH -u PYTHONNOUSERSITE \
+    LD_LIBRARY_PATH="$VLLM_LD_LIBRARY_PATH" \
+    CUDA_VISIBLE_DEVICES="$gpu" \
+    "$PYTHON_BIN" -m vllm.entrypoints.openai.api_server \
+      --host "$VLLM_HOST" \
+      --port "$port" \
+      --model "$MODEL_PATH" \
+      --served-model-name "$VLLM_SERVED_NAME" \
+      --trust-remote-code \
+      --dtype bfloat16 \
+      --max-model-len "$VLLM_MAX_MODEL_LEN" \
+      --gpu-memory-utilization "$VLLM_GPU_MEM_UTIL" \
+      --tensor-parallel-size 1 \
+      --enforce-eager \
+      > "$VLLM_LOG_DIR/vllm_gpu${gpu}_port${port}.log" 2>&1 &
+  PIDS+=("$!")
+
+  ready=0
+  for _attempt in $(seq 1 "$READY_TIMEOUT_SEC"); do
+    if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
+      echo "[vllm] replica exited before ready gpu=${gpu} port=${port}" >&2
+      tail -n 100 "$VLLM_LOG_DIR/vllm_gpu${gpu}_port${port}.log" >&2 || true
+      exit 1
+    fi
+    if curl -fsS "$url/models" >/dev/null 2>&1; then
+      echo "[vllm] ready gpu=${gpu} url=${url}"
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ready" != "1" ]]; then
+    echo "[vllm] did not become ready in ${READY_TIMEOUT_SEC}s gpu=${gpu}" >&2
+    tail -n 100 "$VLLM_LOG_DIR/vllm_gpu${gpu}_port${port}.log" >&2 || true
+    exit 1
   fi
-fi
-
-cd "$(dirname "$0")/.."
-
-IFS=',' read -ra GPU_ARR <<< "${VLLM_GPUS}"
-IFS=',' read -ra PORT_ARR <<< "${VLLM_PORTS}"
-
-if [[ ${#GPU_ARR[@]} -ne ${#PORT_ARR[@]} ]]; then
-  echo "VLLM_GPUS and VLLM_PORTS length mismatch" >&2
-  exit 1
-fi
-
-LOG_DIR="./logs/vllm"
-mkdir -p "$LOG_DIR"
-
-SERVED="${VLLM_SERVED_MODEL:-${BASE_MODEL_DIR}}"
-
-for i in "${!GPU_ARR[@]}"; do
-  gpu="${GPU_ARR[$i]}"
-  port="${PORT_ARR[$i]}"
-  log="${LOG_DIR}/vllm_gpu${gpu}_port${port}.log"
-  echo "[vllm] GPU ${gpu} -> port ${port} -> log ${log}"
-  CUDA_VISIBLE_DEVICES="${gpu}" nohup python -m vllm.entrypoints.openai.api_server \
-    --model "${SERVED}" \
-    --served-model-name "graph-preflexor-grpo" \
-    --port "${port}" \
-    --host 127.0.0.1 \
-    --gpu-memory-utilization "${VLLM_GPU_MEM_UTIL:-0.85}" \
-    --max-model-len "${VLLM_MAX_MODEL_LEN:-8192}" \
-    --trust-remote-code \
-    >"${log}" 2>&1 &
-  echo "[vllm] launched pid=$!"
 done
 
-echo "[vllm] all replicas launched. Wait for 'Application startup complete' in logs."
-echo "[vllm] health check:"
-for port in "${PORT_ARR[@]}"; do
-  echo "  curl -fsS http://127.0.0.1:${port}/v1/models"
-done
+printf '%s\n' "${PIDS[@]}" > "$VLLM_LOG_DIR/pids.txt"
+printf '%s\n' "${URLS[@]}" > "$VLLM_LOG_DIR/urls.txt"
+COMMA_URLS="$(paste -sd, "$VLLM_LOG_DIR/urls.txt")"
+printf '%s\n' "$COMMA_URLS" > "$VLLM_LOG_DIR/vllm_base_urls.txt"
+echo "[vllm] all replicas up. urls=${COMMA_URLS}"
+echo "[vllm] pids saved to $VLLM_LOG_DIR/pids.txt"
+echo "[vllm] logs at $VLLM_LOG_DIR/vllm_gpu*_port*.log"
+
+wait

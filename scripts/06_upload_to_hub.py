@@ -24,6 +24,7 @@ def load_token() -> str:
     env_path = ROOT.parent / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
+            line = line.strip()
             if line.startswith("export HF_TOKEN="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     raise SystemExit("HF_TOKEN not found in env or ../.env")

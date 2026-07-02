@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# ORPO cold start across H200 GPUs (default 4 ranks).
-# Usage: ./03_run_orpo.sh configs/orpo_lfm25_8b.env
+# ORPO cold start using vllm-env python (so torch/trl/peft versions match H200).
+# Usage: ./03_run_orpo.sh configs/orpo_qwen3_8b.env
 set -euo pipefail
 
-CONFIG="${1:-configs/orpo_lfm25_8b.env}"
+CONFIG="${1:-configs/orpo_qwen3_8b.env}"
 if [[ ! -f "$CONFIG" ]]; then
   echo "config not found: $CONFIG" >&2
   exit 1
@@ -11,12 +11,13 @@ fi
 # shellcheck disable=SC1090
 source "$CONFIG"
 
-# Load HF_TOKEN from ../../.env if not already set
+# Load HF_TOKEN from ../../.env if not already set (without sourcing — the .env
+# contains a `huggingface-cli login` line that breaks sourcing).
 if [[ -z "${HF_TOKEN:-}" ]]; then
   ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.env"
   if [[ -f "$ENV_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
+    HF_TOKEN="$(grep -E "^export HF_TOKEN=" "$ENV_FILE" | sed 's/^export HF_TOKEN=//' | tr -d '"' | tr -d "'")"
+    export HF_TOKEN
   fi
 fi
 
@@ -24,17 +25,22 @@ cd "$(dirname "$0")/.."
 
 # Optional WANDB login (skip silently if not set)
 if [[ -n "${WANDB_API_KEY:-}" ]]; then
-  wandb login --relogin "$WANDB_API_KEY" >/dev/null 2>&1 || true
+  "$PYTHON_BIN" -m wandb login --relogin "$WANDB_API_KEY" >/dev/null 2>&1 || true
 fi
 
 export CUDA_VISIBLE_DEVICES="${TRAIN_GPUS}"
 export HF_TOKEN
-export WANDB_PROJECT="${WANDB_PROJECT:-graph-preflexor-lfm25}"
-export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-lfm25-orpo}"
-export WANDB_NAME="${WANDB_NAME:-${WANDB_RUN_GROUP}-$(date +%Y%m%dT%H%M%SZ)}"
+export LD_LIBRARY_PATH="${VLLM_LD_LIBRARY_PATH}"
+export PYTHONPATH="./:${PYTHONPATH:-}"
+
+# Resolve TRAIN_GPUS list -> CUDA_VISIBLE_DEVICES already does the remapping,
+# so torchrun --rdzv_endpoint just needs a port.
+MASTER_PORT="${MASTER_PORT:-29501}"
 
 CMD=(
-  torchrun --nproc_per_node="${NPROC_PER_NODE}" --master_port=29501
+  env -u PYTHONNOUSERSITE
+  "$PYTHON_BIN" -m torch.distributed.run
+  --nproc_per_node="${NPROC_PER_NODE}" --master_port="${MASTER_PORT}"
   -m src.orpo_train
   --base_model "${MODEL_ID}"
   --dataset_path "${PROCESSED_DATASET}"
@@ -58,12 +64,13 @@ CMD=(
 if [[ "${ADD_NEW_SPECIAL_TOKENS:-0}" == "1" ]]; then
   CMD+=(--add_new_special_tokens)
 fi
-if [[ "${HUB_PUSH:-1}" == "1" ]]; then
+if [[ "${HUB_PUSH:-0}" == "1" ]]; then
   CMD+=(--push_to_hub --hub_model_id "${HUB_MODEL_ID}")
   if [[ "${HUB_PUBLIC:-0}" == "1" ]]; then
     CMD+=(--hub_public)
   fi
 fi
 
+echo "[orpo] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} NPROC=${NPROC_PER_NODE} PYTHON=${PYTHON_BIN}"
 echo "[orpo] launching: ${CMD[*]}"
 exec "${CMD[@]}"

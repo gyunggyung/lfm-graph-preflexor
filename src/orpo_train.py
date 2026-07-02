@@ -25,9 +25,9 @@ from peft import LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 try:
-    from trl.experimental.orpo import ORPOConfig, ORPOTrainer
-except ImportError:
     from trl import ORPOConfig, ORPOTrainer
+except ImportError:
+    from trl.experimental.orpo import ORPOConfig, ORPOTrainer
 from trl import SFTConfig, SFTTrainer
 
 
@@ -166,6 +166,14 @@ def main() -> None:
         model = get_peft_model(model, peft_config)
         if local_rank == 0:
             model.print_trainable_parameters()
+
+    # transformers 5.x removed `warnings_issued` from PreTrainedModel; some TRL
+    # trainers (ORPO, DPO) still reference it. Restore as empty dict.
+    if not hasattr(model, "warnings_issued"):
+        try:
+            model.warnings_issued = {}
+        except Exception:
+            pass
 
     common = dict(
         output_dir=args.output_dir,
