@@ -9,7 +9,9 @@ export NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 
 # ---- Python env (use existing vllm env so torch/trl/vllm versions match) ----
 export TERMINAL_ROOT="${TERMINAL_ROOT:-/home/work/.projects/LLM-OS-Models/Terminal}"
-export VLLM_ENV="${VLLM_ENV:-$TERMINAL_ROOT/.vllm-lfm-cu12}"
+# Use the strict cu129 env: vllm 0.20.2 works with Qwen3.5 text-only arch
+# (.vllm-lfm-cu12 has vllm 0.19.1 which fails on Qwen3_5TextForCausalLM)
+export VLLM_ENV="${VLLM_ENV:-$TERMINAL_ROOT/.vllm-eval-cu129-strict}"
 export PYTHON_BIN="${PYTHON_BIN:-$VLLM_ENV/bin/python}"
 
 # LD_LIBRARY_PATH for torch/cuda/nvidia libs in vllm-env

@@ -41,7 +41,7 @@ export WANDB_NAME="${WANDB_NAME:-${WANDB_RUN_GROUP}-$(date +%Y%m%dT%H%M%SZ)}"
 FIRST_PORT="${VLLM_BASE_PORT%%,*}"
 VLLM_BASE_URL="http://${VLLM_HOST:-127.0.0.1}:${FIRST_PORT}/v1"
 
-if [[ "${VLLM_SKIP_CHECK:-0}" != "1" ]]; then
+if [[ "${GRPO_NO_VLLM:-0}" != "1" && "${VLLM_SKIP_CHECK:-0}" != "1" ]]; then
   if curl -fsS "${VLLM_BASE_URL}/models" >/dev/null 2>&1; then
     echo "[grpo] vLLM endpoint OK: ${VLLM_BASE_URL}"
   else
@@ -93,14 +93,14 @@ CMD=(
   --judge_queue_every_steps "${JUDGE_QUEUE_EVERY_STEPS}"
   --judge_queue_batch_size "${JUDGE_QUEUE_BATCH_SIZE}"
   --chat_template_enable_thinking "${CHAT_TEMPLATE_ENABLE_THINKING}"
-  --use_vllm
-  --vllm_mode "${VLLM_MODE_EFF}"
 )
-
-if [[ "${VLLM_MODE_EFF}" == "server" ]]; then
-  CMD+=(--vllm_server_host "${VLLM_HOST:-127.0.0.1}" --vllm_server_port "${FIRST_PORT}")
-else
-  CMD+=(--vllm_gpu_memory_utilization "${VLLM_COLOCATE_GPU_MEM_UTIL:-0.35}")
+if [[ "${GRPO_NO_VLLM:-0}" != "1" ]]; then
+  CMD+=(--use_vllm --vllm_mode "${VLLM_MODE_EFF}")
+  if [[ "${VLLM_MODE_EFF}" == "server" ]]; then
+    CMD+=(--vllm_server_host "${VLLM_HOST:-127.0.0.1}" --vllm_server_port "${FIRST_PORT}")
+  else
+    CMD+=(--vllm_gpu_memory_utilization "${VLLM_COLOCATE_GPU_MEM_UTIL:-0.35}")
+  fi
 fi
 
 if [[ -n "${CLAUDE_BLEND_ALPHA:-}" ]]; then

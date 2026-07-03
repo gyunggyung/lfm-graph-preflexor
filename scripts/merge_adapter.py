@@ -60,7 +60,30 @@ def main() -> None:
     model = model.merge_and_unload()
 
     print(f"[merge] saving merged model to {out}...")
+    # Preserve text-only arch (PeftModel can collapse Qwen3_5TextForCausalLM -> Qwen3_5ForCausalLM, which vLLM misreads as multimodal)
+    preserved_arch = None
+    preserved_model_type = None
+    base_cfg_path = Path(args.base_model) / "config.json"
+    if base_cfg_path.exists():
+        import json as _json
+        base_cfg = _json.loads(base_cfg_path.read_text())
+        preserved_arch = base_cfg.get("architectures")
+        preserved_model_type = base_cfg.get("model_type")
+        if preserved_arch or preserved_model_type:
+            print(f"[merge] preserving base arch={preserved_arch} model_type={preserved_model_type}")
+
     model.save_pretrained(out, safe_serialization=True)
+
+    if preserved_arch or preserved_model_type:
+        import json as _json
+        out_cfg_path = Path(out) / "config.json"
+        out_cfg = _json.loads(out_cfg_path.read_text())
+        if preserved_arch:
+            out_cfg["architectures"] = preserved_arch
+        if preserved_model_type:
+            out_cfg["model_type"] = preserved_model_type
+        out_cfg_path.write_text(_json.dumps(out_cfg, indent=2))
+        print(f"[merge] re-patched saved config arch/model_type to text-only")
 
     print("[merge] saving tokenizer...")
     tok = AutoTokenizer.from_pretrained(

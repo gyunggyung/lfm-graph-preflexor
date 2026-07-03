@@ -19,9 +19,13 @@ fi
 # shellcheck disable=SC1090
 source "$CONFIG"
 
-MODEL_PATH="${2:-${BASE_MODEL_DIR}/merged}"
-if [[ ! -d "$MODEL_PATH" ]]; then
-  echo "[vllm] $MODEL_PATH not found, falling back to ${TOKENIZER_MODEL}"
+MODEL_PATH="${2:-${BASE_MODEL_DIR}}"
+# Backward compat: if BASE_MODEL_DIR has no config.json but BASE_MODEL_DIR/merged does, use that
+if [[ ! -f "$MODEL_PATH/config.json" && -f "$MODEL_PATH/merged/config.json" ]]; then
+  MODEL_PATH="$MODEL_PATH/merged"
+fi
+if [[ ! -f "$MODEL_PATH/config.json" ]]; then
+  echo "[vllm] no config.json at $MODEL_PATH, falling back to ${TOKENIZER_MODEL}"
   MODEL_PATH="${TOKENIZER_MODEL}"
 fi
 

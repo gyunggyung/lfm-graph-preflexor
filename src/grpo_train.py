@@ -20,6 +20,15 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Stub vllm if ABI mismatch breaks import — lets GRPOTrainer fall back to HF generate
+import sys
+import types
+try:
+    import vllm  # noqa: F401
+except Exception:
+    print("[grpo] vllm import failed, using stub (HF generate rollout)", flush=True)
+    sys.modules['vllm'] = types.ModuleType('vllm')
+
 import torch
 from datasets import Dataset
 from huggingface_hub import login
