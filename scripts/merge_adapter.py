@@ -34,6 +34,26 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model, torch_dtype=dtype, trust_remote_code=True,
     )
+
+    print("[merge] loading adapter tokenizer + resizing base embeddings...")
+    adapter_tok = AutoTokenizer.from_pretrained(args.adapter, trust_remote_code=True)
+    base_tok = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
+    # If adapter tokenizer has different vocab (special tokens added/removed), match it
+    if len(adapter_tok) != len(base_tok):
+        print(f"[merge] vocab mismatch: adapter={len(adapter_tok)} base={len(base_tok)}")
+        # Apply the same special token additions the adapter used
+        special = []
+        for s in ["<think>", "</think>", "<brainstorm>", "</brainstorm>",
+                  "<graph>", "</graph>", "<graph_json>", "</graph_json>",
+                  "<patterns>", "</patterns>", "<synthesis>", "</synthesis>"]:
+            if s not in base_tok.get_vocab():
+                special.append(s)
+        if special:
+            n = base_tok.add_special_tokens({"additional_special_tokens": special})
+            print(f"[merge] added {n} special tokens to base tokenizer")
+        model.resize_token_embeddings(len(base_tok))
+        print(f"[merge] resized base embeddings to {len(base_tok)}")
+
     print("[merge] applying adapter...")
     model = PeftModel.from_pretrained(model, args.adapter)
     print("[merge] merging weights...")
